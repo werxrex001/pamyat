@@ -1,9 +1,3 @@
---[[
-	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
-	Modified: Added Memory System & Color Memory
-	Credits: locality (Further Reach), divo (Multi Color Line)
-]]
-
 if not game:IsLoaded() then game.Loaded:Wait() end
 game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("MenuGui"):WaitForChild("TopRight"):WaitForChild("CoinsFrame"):WaitForChild("CoinsDisplay"):WaitForChild("Coins")
 
@@ -27,7 +21,18 @@ local DiedHandle = nil
 local MEMORY_FILE = "further_reach_memory.txt"
 local COLOR_FILE = "further_reach_color.txt"
 
-local ScriptNotify = ReplicatedStorage.GamepassEvents.FurtherReachBoughtNotifier
+-- Безопасное получение объекта с ожиданием
+local GamepassEvents = ReplicatedStorage:WaitForChild("GamepassEvents", 5)
+if not GamepassEvents then
+    Notify({Title = "Ошибка", Description = "Не найден GamepassEvents!", Duration = 5})
+    return
+end
+
+local ScriptNotify = GamepassEvents:FindFirstChild("FurtherReachBoughtNotifier")
+if not ScriptNotify then
+    Notify({Title = "Ошибка", Description = "Игра обновилась. FurtherReachBoughtNotifier не найден.", Duration = 5})
+    return
+end
 local Activator = ReplicatedStorage.MenuToys.LimitedTimeToyEvent
 
 -- Функция перезагрузки
