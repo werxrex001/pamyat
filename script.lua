@@ -1,3 +1,8 @@
+--[[
+	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+	Modified: Fixed Line Disappearing + Auto-Save Memory
+]]
+
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players = game:GetService("Players")
@@ -7,14 +12,12 @@ local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local StarterGui = game:GetService("StarterGui")
 local LocalPlayer = Players.LocalPlayer
 
--- Обычные уведомления
 local function Notify(title, text)
     pcall(function()
         StarterGui:SetCore("SendNotification", {Title = title, Text = text, Duration = 4})
     end)
 end
 
--- Память
 local MEMORY_FILE = "reach_memory.txt"
 local hasFS = (isfile and readfile and writefile)
 local shouldEnable = false
@@ -28,7 +31,6 @@ if hasFS then
     end)
 end
 
--- Ожидание игры
 local MenuGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("MenuGui", 15)
 if not MenuGui then return end
 
@@ -48,6 +50,7 @@ end
 local Config = { Toggle = Enum.KeyCode.Seven, Unload = Enum.KeyCode.Eight, Working = false }
 local Cooldown = false
 local DiedHandle = nil
+local LineLoopThread = nil -- Поток для удержания линии
 
 local function ReloadScript()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("GrabbingScript") then
@@ -63,6 +66,16 @@ local function ReloadScript()
     end
 end
 
+-- Функция активации линии
+local function ActivateLine()
+    ColorNotify.Parent = ReplicatedFirst
+    Activator.Parent = GamepassEvents
+    Activator.Name = "MulticolorLineBoughtNotifier"
+    ReloadScript()
+    task.wait(0.1)
+    if Activator then Activator:FireServer() end
+end
+
 local function Toggle(notify, fromLoad)
     Config.Working = not Config.Working
     local isEnabled = Config.Working
@@ -76,29 +89,41 @@ local function Toggle(notify, fromLoad)
         if Marker then Marker:Destroy() end
         local NewMarker = Instance.new("BoolValue"); NewMarker.Name = "FartherReach"; NewMarker.Value = true; NewMarker.Parent = LocalPlayer
 
-        -- 1. Включаем Further Reach
+        -- 1. Further Reach
         ReachNotify.Parent = ReplicatedFirst
         Activator.Parent = GamepassEvents
         Activator.Name = "FurtherReachBoughtNotifier"
         ReloadScript()
         task.wait(0.2)
-        Activator:FireServer()
+        if Activator then Activator:FireServer() end
         task.wait(0.5)
 
-        -- 2. Включаем Multicolor Line
-        ColorNotify.Parent = ReplicatedFirst
-        Activator.Parent = GamepassEvents
-        Activator.Name = "MulticolorLineBoughtNotifier"
-        ReloadScript()
-        task.wait(0.2)
-        Activator:FireServer()
+        -- 2. Multicolor Line
+        ActivateLine()
+
+        -- ЦИКЛ УДЕРЖАНИЯ ЛИНИИ (чтобы не пропадала)
+        if LineLoopThread then task.cancel(LineLoopThread) end
+        LineLoopThread = task.spawn(function()
+            while Config.Working do
+                task.wait(1.5) -- Каждые 1.5 секунды проверяем/обновляем линию
+                if Config.Working then
+                    pcall(function()
+                        ActivateLine()
+                    end)
+                end
+            end
+        end)
 
         if DiedHandle then DiedHandle:Disconnect() end
         DiedHandle = LocalPlayer.CharacterAdded:Connect(function(Character)
             Character:WaitForChild("GrabbingScript", 5)
-            if Config.Working then Toggle(false); task.wait(0.1); Toggle(false) end
+            if Config.Working then 
+                Toggle(false); task.wait(0.1); Toggle(false) 
+            end
         end)
     else
+        if LineLoopThread then task.cancel(LineLoopThread); LineLoopThread = nil end
+        
         local Marker = LocalPlayer:FindFirstChild("FartherReach")
         if Marker then Marker:Destroy() end
         ReachNotify.Parent = GamepassEvents
@@ -114,16 +139,14 @@ end
 if hasFS then
     task.spawn(function()
         while true do
-            task.wait(1) -- Ждем ровно 1 секунду
+            task.wait(1)
             pcall(function()
-                -- Записываем текущее состояние (Config.Working)
                 writefile(MEMORY_FILE, tostring(Config.Working))
             end)
         end
     end)
 end
 
--- ЗАПУСК ПАМЯТИ ПРИ ВХОДЕ
 if shouldEnable then
     Notify("Namii Hub", "Память найдена! Жду загрузку...")
     task.wait(4)
