@@ -1,4 +1,5 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
+
 game:GetService("Players").LocalPlayer.PlayerGui:WaitForChild("MenuGui"):WaitForChild("TopRight"):WaitForChild("CoinsFrame"):WaitForChild("CoinsDisplay"):WaitForChild("Coins")
 
 local Players = game:GetService("Players")
@@ -18,21 +19,35 @@ local Config = {
 
 local Cooldown = false
 local DiedHandle = nil
-local MEMORY_FILE = "further_reach_memory.txt"
+
+-- Файлы памяти для двух геймпасов
+local MEMORY_FILE_1 = "further_reach_memory.txt"
+local MEMORY_FILE_2 = "second_gamepass_memory.txt"
 local COLOR_FILE = "further_reach_color.txt"
 
--- Безопасное получение объекта с ожиданием
+-- Безопасное получение объектов
 local GamepassEvents = ReplicatedStorage:WaitForChild("GamepassEvents", 5)
 if not GamepassEvents then
     Notify({Title = "Ошибка", Description = "Не найден GamepassEvents!", Duration = 5})
     return
 end
 
-local ScriptNotify = GamepassEvents:FindFirstChild("FurtherReachBoughtNotifier")
-if not ScriptNotify then
+-- Ивенты для двух геймпасов
+local ScriptNotify1 = GamepassEvents:FindFirstChild("FurtherReachBoughtNotifier")
+local ScriptNotify2 = GamepassEvents:FindFirstChild("SecondGamepassBoughtNotifier") -- Измени имя на реальное
+
+if not ScriptNotify1 then
     Notify({Title = "Ошибка", Description = "Игра обновилась. FurtherReachBoughtNotifier не найден.", Duration = 5})
     return
 end
+
+-- Если второго ивента нет в GamepassEvents, создадим его (или найди правильное имя)
+if not ScriptNotify2 then
+    ScriptNotify2 = Instance.new("RemoteEvent")
+    ScriptNotify2.Name = "SecondGamepassBoughtNotifier"
+    ScriptNotify2.Parent = GamepassEvents
+end
+
 local Activator = ReplicatedStorage.MenuToys.LimitedTimeToyEvent
 
 -- Функция перезагрузки
@@ -48,12 +63,11 @@ local function ReloadScript()
     end
 end
 
--- Функция сохранения цвета (вызывается, когда цвет меняется в игре)
+-- Функция сохранения цвета
 local function SaveColor()
     local MenuGui = LocalPlayer.PlayerGui:FindFirstChild("MenuGui")
     if MenuGui and MenuGui.Menu.TabContents.Settings.Contents.LineFrame then
         local ColorPicker = MenuGui.Menu.TabContents.Settings.Contents.LineFrame.ColorPicking
-        -- Если в игре используется Color3Value, мы берем его значение
         if ColorPicker:FindFirstChildWhichIsA("Color3Value") then
             local currentColor = ColorPicker.Color3Value.Value
             if writefile then
@@ -64,115 +78,184 @@ local function SaveColor()
     end
 end
 
--- Основная функция
-local function Toggle(notify, fromLoad)
-    Config.Working = not Config.Working
-    local isEnabled = Config.Working
-
+-- Функция активации для конкретного геймпаса
+local function ActivateGamepass(gamepassNumber, notify)
+    local markerName = gamepassNumber == 1 and "FartherReach" or "SecondGamepass"
+    local scriptNotify = gamepassNumber == 1 and ScriptNotify1 or ScriptNotify2
+    
+    -- Удаляем старый маркер
+    local LineTexture = LocalPlayer:FindFirstChild(markerName)
+    if LineTexture then LineTexture:Destroy() end
+    
+    -- Создаем новый маркер
+    local Marker = Instance.new("BoolValue")
+    Marker.Name = markerName
+    Marker.Value = true
+    Marker.Parent = LocalPlayer
+    
+    -- Перемещаем ивент
+    scriptNotify.Parent = ReplicatedFirst
+    Activator.Parent = ReplicatedStorage.GamepassEvents
+    Activator.Name = scriptNotify.Name
+    
+    ReloadScript()
+    
+    -- Восстановление цвета
+    if isfile and readfile and isfile(COLOR_FILE) then
+        local success, data = pcall(function() return readfile(COLOR_FILE) end)
+        if success and data then
+            local r, g, b = data:match("([^,]+),([^,]+),([^,]+)")
+            if r and g and b then
+                local savedColor = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
+                print("Восстановлен цвет из памяти: ", savedColor)
+            end
+        end
+    end
+    
+    task.delay(0.1, function()
+        if Activator then Activator:FireServer() end
+    end)
+    
+    if DiedHandle then DiedHandle:Disconnect() end
+    DiedHandle = LocalPlayer.CharacterAdded:Connect(function(Character)
+        Character:WaitForChild("GrabbingScript")
+        if Config.Working then
+            Toggle(false); task.wait(0.1)
+            Toggle(false)
+        end
+    end)
+    
     if notify then
         Notify({
-            Title = "Further Reach",
-            Description = isEnabled and "Activated!" or "Disabled!",
+            Title = gamepassNumber == 1 and "Further Reach" or "Second Gamepass",
+            Description = "Activated!",
             Duration = 5
         })
     end
+end
 
+-- Функция деактивации
+local function DeactivateGamepass(gamepassNumber, notify)
+    local markerName = gamepassNumber == 1 and "FartherReach" or "SecondGamepass"
+    local LineTexture = LocalPlayer:FindFirstChild(markerName)
+    if LineTexture then LineTexture:Destroy() end
+    
+    -- Возвращаем ивенты на место
+    ScriptNotify1.Parent = ReplicatedStorage.GamepassEvents
+    ScriptNotify2.Parent = ReplicatedStorage.GamepassEvents
+    Activator.Name = "LimitedTimeToyEvent"
+    Activator.Parent = ReplicatedStorage.MenuToys
+    
+    ReloadScript()
+    
+    if DiedHandle then
+        DiedHandle:Disconnect()
+        DiedHandle = nil
+    end
+    
+    if notify then
+        Notify({
+            Title = gamepassNumber == 1 and "Further Reach" or "Second Gamepass",
+            Description = "Disabled!",
+            Duration = 5
+        })
+    end
+end
+
+-- Основная функция переключения
+local function Toggle(gamepassNumber, notify, fromLoad)
+    local memoryFile = gamepassNumber == 1 and MEMORY_FILE_1 or MEMORY_FILE_2
+    
+    -- Читаем текущее состояние из памяти
+    local isEnabled = false
+    if isfile and readfile and isfile(memoryFile) then
+        local success, data = pcall(function() return readfile(memoryFile) end)
+        if success and data == "true" then
+            isEnabled = true
+        end
+    end
+    
+    -- Переключаем состояние
+    isEnabled = not isEnabled
+    
     if isEnabled then
-        local LineTexture = LocalPlayer:FindFirstChild("FartherReach")
-        if LineTexture then LineTexture:Destroy() end
-        
-        local Marker = Instance.new("BoolValue")
-        Marker.Name = "FartherReach"
-        Marker.Value = true
-        Marker.Parent = LocalPlayer
-
-        ScriptNotify.Parent = ReplicatedFirst
-        Activator.Parent = ReplicatedStorage.GamepassEvents
-        Activator.Name = "FurtherReachBoughtNotifier"
-
-        ReloadScript()
-        
-        -- Восстановление цвета из памяти при активации
-        if isfile and readfile and isfile(COLOR_FILE) then
-            local success, data = pcall(function() return readfile(COLOR_FILE) end)
-            if success and data then
-                local r, g, b = data:match("([^,]+),([^,]+),([^,]+)")
-                if r and g and b then
-                    local savedColor = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
-                    print("Восстановлен цвет из памяти: ", savedColor)
-                    -- Тут можно применить цвет к линиям (если игра позволяет)
-                end
-            end
-        end
-
-        task.delay(0.1, function()
-            if Activator then Activator:FireServer() end
-        end)
-
-        if DiedHandle then DiedHandle:Disconnect() end
-        DiedHandle = LocalPlayer.CharacterAdded:Connect(function(Character)
-            Character:WaitForChild("GrabbingScript")
-            if Config.Working then
-                Toggle(false); task.wait(0.1)
-                Toggle(false)
-            end
-        end)
+        ActivateGamepass(gamepassNumber, notify)
     else
-        local LineTexture = LocalPlayer:FindFirstChild("FartherReach")
-        if LineTexture then LineTexture:Destroy() end
-
-        ScriptNotify.Parent = ReplicatedStorage.GamepassEvents
-        Activator.Name = "LimitedTimeToyEvent"
-        Activator.Parent = ReplicatedStorage.MenuToys
-
-        ReloadScript()
-        if DiedHandle then
-            DiedHandle:Disconnect()
-            DiedHandle = nil
-        end
+        DeactivateGamepass(gamepassNumber, notify)
     end
-
+    
+    -- Сохраняем состояние
     if not fromLoad and writefile then
-        writefile(MEMORY_FILE, tostring(isEnabled))
+        writefile(memoryFile, tostring(isEnabled))
     end
 end
 
--- Загрузка памяти при старте
-local shouldEnable = false
-if isfile and readfile and isfile(MEMORY_FILE) then
-    local success, data = pcall(function() return readfile(MEMORY_FILE) end)
+-- Загрузка памяти при старте для обоих геймпасов
+local shouldEnable1 = false
+local shouldEnable2 = false
+
+if isfile and readfile and isfile(MEMORY_FILE_1) then
+    local success, data = pcall(function() return readfile(MEMORY_FILE_1) end)
     if success and data == "true" then
-        shouldEnable = true
+        shouldEnable1 = true
     end
 end
 
-if shouldEnable then
-    Toggle(false, true) 
-else
-    print("[Further Reach] Загружен. Нажмите 7 для активации.")
+if isfile and readfile and isfile(MEMORY_FILE_2) then
+    local success, data = pcall(function() return readfile(MEMORY_FILE_2) end)
+    if success and data == "true" then
+        shouldEnable2 = true
+    end
 end
 
--- Привязка клавиш (кнопка 8 — сохраняет текущий цвет в память перед выгрузкой)
+-- Применяем сохраненные состояния
+if shouldEnable1 then
+    Toggle(1, false, true)
+end
+
+if shouldEnable2 then
+    Toggle(2, false, true)
+end
+
+if not shouldEnable1 and not shouldEnable2 then
+    print("[Script] Загружен. Нажмите 7 для активации.")
+end
+
+-- Привязка клавиш
 local BindHandle = UIS.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
-
+    
     if input.KeyCode == Config.Toggle then
         if Cooldown then return end
         Cooldown = true
-        Toggle(true)
+        
+        -- Переключаем первый геймпас (можно изменить логику под свои нужды)
+        Toggle(1, true)
+        
         task.delay(0.2, function() Cooldown = false end)
-
     elseif input.KeyCode == Config.Unload then
-        SaveColor() -- Сохраняем цвет перед выгрузкой
+        SaveColor()
         Notify({
-            Title = "Further Reach",
+            Title = "Script",
             Description = "Цвет сохранен. Unloading...",
             Duration = 5
         })
-
-        if Config.Working then
-            Toggle(false)
+        
+        -- Выключаем оба геймпаса
+        if isfile and readfile and isfile(MEMORY_FILE_1) then
+            local success, data = pcall(function() return readfile(MEMORY_FILE_1) end)
+            if success and data == "true" then
+                Toggle(1, false)
+            end
         end
+        
+        if isfile and readfile and isfile(MEMORY_FILE_2) then
+            local success, data = pcall(function() return readfile(MEMORY_FILE_2) end)
+            if success and data == "true" then
+                Toggle(2, false)
+            end
+        end
+        
         BindHandle:Disconnect()
     end
 end)
