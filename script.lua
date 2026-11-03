@@ -1,3 +1,10 @@
+--[[
+	WARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!
+	Modified: Fixed Memory System + Added Notifications
+	Credits: locality (Further Reach), divo (Multi Color Line)
+]]
+
+-- Ожидание полной загрузки игры
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players = game:GetService("Players")
@@ -6,16 +13,47 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
 local LocalPlayer = Players.LocalPlayer
 
+-- Проверка поддержки функций файловой системы
+local hasFileSystem = (isfile and readfile and writefile)
+local MEMORY_FILE = "memory_further_reach.json"
+local CachedData = { Enabled = false }
+
+-- Загрузка памяти
+if hasFileSystem and isfile(MEMORY_FILE) then
+    local success, result = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(readfile(MEMORY_FILE))
+    end)
+    if success and type(result) == "table" and result.Enabled ~= nil then
+        CachedData.Enabled = result.Enabled
+    end
+end
+
 -- Загрузка уведомлений
 local AkaliNotif = loadstring(game:HttpGet("https://raw.githubusercontent.com/ultraskidding/luau/refs/heads/main/AkaliNotif.lua"))()
 local Notify = AkaliNotif.Notify
 
--- Ожидание GUI (с защитой от краша)
-local MenuGui = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild("MenuGui", 10)
-if not MenuGui then return end
-MenuGui:WaitForChild("TopRight"):WaitForChild("CoinsFrame"):WaitForChild("CoinsDisplay"):WaitForChild("Coins")
+-- Уведомление о загрузке
+Notify({
+    Title = "Namii Hub",
+    Description = "Скрипт успешно загружен!",
+    Duration = 5
+})
 
--- Настройки
+-- Ожидание GUI
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local MenuGui = PlayerGui:WaitForChild("MenuGui", 15)
+if not MenuGui then return end
+
+-- Получаем папки
+local GamepassEvents = ReplicatedStorage:WaitForChild("GamepassEvents", 10)
+local MenuToys = ReplicatedStorage:WaitForChild("MenuToys", 10)
+if not GamepassEvents or not MenuToys then return end
+
+local ReachNotify = GamepassEvents:WaitForChild("FurtherReachBoughtNotifier", 5)
+local ColorNotify = GamepassEvents:WaitForChild("MulticolorLineBoughtNotifier", 5)
+local Activator = MenuToys:WaitForChild("LimitedTimeToyEvent", 5)
+if not ReachNotify or not ColorNotify or not Activator then return end
+
 local Config = {
     Toggle = Enum.KeyCode.Seven,
     Unload = Enum.KeyCode.Eight,
@@ -24,29 +62,8 @@ local Config = {
 
 local Cooldown = false
 local DiedHandle = nil
-local MEMORY_FILE = "further_reach_memory.txt"
-local COLOR_FILE = "further_reach_color.txt"
 
--- Получаем папки с ивентами
-local GamepassEvents = ReplicatedStorage:WaitForChild("GamepassEvents", 5)
-local MenuToys = ReplicatedStorage:WaitForChild("MenuToys", 5)
-
-if not GamepassEvents or not MenuToys then
-    Notify({Title = "Ошибка", Description = "Не найдены папки GamepassEvents или MenuToys", Duration = 5})
-    return
-end
-
--- Ивенты для обоих геймпассов
-local ReachNotify = GamepassEvents:WaitForChild("FurtherReachBoughtNotifier", 5)
-local ColorNotify = GamepassEvents:WaitForChild("MulticolorLineBoughtNotifier", 5)
-local Activator = MenuToys:WaitForChild("LimitedTimeToyEvent", 5)
-
-if not ReachNotify or not ColorNotify or not Activator then
-    Notify({Title = "Ошибка", Description = "Игра обновилась. Ивенты не найдены.", Duration = 5})
-    return
-end
-
--- Перезагрузка GUI для применения изменений
+-- Функция перезагрузки
 local function ReloadScript()
     if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("GrabbingScript") then
         LocalPlayer.Character.GrabbingScript.Enabled = false
@@ -64,15 +81,15 @@ local function ReloadScript()
     end
 end
 
--- Включение / Выключение
+-- Основная функция
 local function Toggle(notify, fromLoad)
     Config.Working = not Config.Working
     local isEnabled = Config.Working
 
     if notify then
         Notify({
-            Title = "Memory Script",
-            Description = isEnabled and "Геймпассы активированы!" or "Выключено.",
+            Title = "Namii Hub",
+            Description = isEnabled and "Namii Tota Tota: ВКЛЮЧЕНО! ✅" or "Namii Tota Tota: ВЫКЛЮЧЕНО! ❌",
             Duration = 5
         })
     end
@@ -86,29 +103,21 @@ local function Toggle(notify, fromLoad)
         NewMarker.Value = true
         NewMarker.Parent = LocalPlayer
 
-        -- 1. Активация Further Reach
+        -- 1. Further Reach
         ReachNotify.Parent = ReplicatedFirst
         Activator.Parent = GamepassEvents
         Activator.Name = "FurtherReachBoughtNotifier"
         ReloadScript()
-        
-        task.delay(0.1, function()
-            if Activator then Activator:FireServer() end
-        end)
-        
+        task.delay(0.1, function() if Activator then Activator:FireServer() end end)
         task.wait(0.2)
 
-        -- 2. Активация Multicolor Line (Твой цвет)
+        -- 2. Multicolor Line
         ColorNotify.Parent = ReplicatedFirst
         Activator.Parent = GamepassEvents
         Activator.Name = "MulticolorLineBoughtNotifier"
         ReloadScript()
-        
-        task.delay(0.1, function()
-            if Activator then Activator:FireServer() end
-        end)
+        task.delay(0.1, function() if Activator then Activator:FireServer() end end)
 
-        -- Обработка смерти
         if DiedHandle then DiedHandle:Disconnect() end
         DiedHandle = LocalPlayer.CharacterAdded:Connect(function(Character)
             Character:WaitForChild("GrabbingScript", 5)
@@ -125,30 +134,43 @@ local function Toggle(notify, fromLoad)
         ColorNotify.Parent = GamepassEvents
         Activator.Name = "LimitedTimeToyEvent"
         Activator.Parent = MenuToys
-
         ReloadScript()
+        
         if DiedHandle then
             DiedHandle:Disconnect()
             DiedHandle = nil
         end
     end
 
-    if not fromLoad and writefile then
-        writefile(MEMORY_FILE, tostring(isEnabled))
+    -- СОХРАНЕНИЕ В ПАМЯТЬ
+    if not fromLoad and hasFileSystem then
+        CachedData.Enabled = isEnabled
+        pcall(function()
+            writefile(MEMORY_FILE, game:GetService("HttpService"):JSONEncode(CachedData))
+        end)
     end
 end
 
--- Восстановление памяти
-local shouldEnable = false
-if isfile and readfile and isfile(MEMORY_FILE) then
-    local success, data = pcall(function() return readfile(MEMORY_FILE) end)
-    if success and data == "true" then shouldEnable = true end
-end
-
-if shouldEnable then
+-- АВТО-АКТИВАЦИЯ ПРИ ВХОДЕ В ИГРУ
+if CachedData.Enabled then
+    Notify({
+        Title = "Namii Hub",
+        Description = "Namii Tota Tota: Загружаю память... ⏳",
+        Duration = 4
+    })
+    task.wait(2)
     Toggle(false, true) 
+    Notify({
+        Title = "Namii Hub",
+        Description = "Namii Tota Tota: Память применена! 🧠",
+        Duration = 5
+    })
 else
-    print("[Memory Script] Загружен. Кнопка 7 - ВКЛ, 8 - Выгрузить.")
+    Notify({
+        Title = "Namii Hub",
+        Description = "Namii Tota Tota: Нажми 7 для активации! 🎮",
+        Duration = 5
+    })
 end
 
 -- Привязка клавиш
@@ -162,7 +184,7 @@ local BindHandle = UIS.InputBegan:Connect(function(input, gameProcessed)
         task.delay(0.2, function() Cooldown = false end)
 
     elseif input.KeyCode == Config.Unload then
-        Notify({Title = "Memory Script", Description = "Выгрузка...", Duration = 5})
+        Notify({Title = "Namii Hub", Description = "Namii Tota Tota: Выгружаю скрипт... 👋", Duration = 5})
         if Config.Working then Toggle(false) end
         BindHandle:Disconnect()
     end
